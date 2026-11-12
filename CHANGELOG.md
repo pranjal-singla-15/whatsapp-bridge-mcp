@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+
+- Fail fast: while connecting keeps failing, calls are rejected immediately with the real cause instead of waiting for a timeout.
+- Failure classification: a repeated code-level start error is reported in `whatsapp_status` as a likely WhatsApp Web incompatibility (`diagnosis`) instead of being retried silently.
+- Post-connect self-test: read-only probes of chats, messages, contacts and search run right after every connect. Broken features are switched off immediately and listed in `whatsapp_status` (`selfTest`).
+
 ## [0.1.3] - 2026-11-12
 
 ### Fixed

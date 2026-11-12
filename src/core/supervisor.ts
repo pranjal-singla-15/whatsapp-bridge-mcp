@@ -45,11 +45,18 @@ export interface SupervisorStatus {
   lastError: string | null;
   capabilities: CapabilityHealth[];
   recentEvents: { at: number; event: string }[];
+  /** Plain-language explanation when something is persistently wrong, else null. */
+  diagnosis: string | null;
+  /** Result of the read-only self-test run right after each connect. */
+  selfTest: { at: number; failed: { capability: Capability; error: string }[] } | null;
 }
 
 /** Errors that reflect the caller's input, not the health of WhatsApp. */
 const CALLER_ERRORS = new Set(['NOT_FOUND', 'INVALID_INPUT']);
 const MAX_EVENTS = 25;
+/** Errors that come from code meeting an unexpected page/protocol shape, not from the network. */
+const INCOMPATIBILITY =
+  /Cannot read propert(y|ies) of (null|undefined)|is not a function|is not defined|is not iterable|Evaluation failed/i;
 
 /**
  * Runtime self-healing. Owns the transport lifecycle:
@@ -73,6 +80,10 @@ export class Supervisor {
   private connectedSince: number | null = null;
   private reconnects = 0;
   private everConnected = false;
+  private diagnosis: string | null = null;
+  private selfTestResult: SupervisorStatus['selfTest'] = null;
+  private lastFailureSignature: string | null = null;
+  private repeatedFailures = 0;
   private interactive = false;
   private lastRevive = 0;
   private lastError: string | null = null;
@@ -207,6 +218,8 @@ export class Supervisor {
       lastError: this.lastError,
       capabilities: this.health.snapshot(),
       recentEvents: [...this.events_],
+      diagnosis: this.diagnosis,
+      selfTest: this.selfTestResult,
     };
   }
 
@@ -259,12 +272,17 @@ export class Supervisor {
       throw errors.loggedOut();
     }
     if (this.status_ !== 'running' || !this.transport) {
-      if (this.status_ === 'connecting') {
-        // Brief grace period so calls made during a quick reconnect succeed transparently.
+      // Fail fast: if connecting is already failing, say why immediately instead of waiting.
+      const failing = this.failures[this.activeSlot] ?? 0;
+      if (this.status_ === 'connecting' && failing === 0) {
+        // Healthy cold start or quick reconnect: wait so the call succeeds transparently.
         await this.waitUntilConnected(this.opts.connectGraceMs ?? 45_000).catch(() => undefined);
       }
       if (this.status_ !== 'running' || !this.transport) {
-        throw errors.notConnected(this.transport?.state() ?? this.status_);
+        throw errors.notConnected(
+          this.transport?.state() ?? this.status_,
+          failing > 0 ? (this.diagnosis ?? this.lastError) : null,
+        );
       }
     }
     return this.transport;
@@ -312,6 +330,7 @@ export class Supervisor {
         }
         this.failures[idx] = (this.failures[idx] ?? 0) + 1;
         this.record(`${slot.name}: start failed (${this.failures[idx]}): ${this.lastError}`);
+        this.classifyStartFailure(slot.name, this.lastError);
         // NOTE: never auto-restore the session backup here. WhatsApp's end-to-end encryption
         // state ratchets forward; rolling it back to an older snapshot gets the device unlinked
         // (observed 2026-11-12). Generic start failures are retried; the backup is for manual
@@ -347,8 +366,65 @@ export class Supervisor {
     this.connectedSince = this.clock.now();
     this.probeFailures = 0;
     if (idx > 0) this.health.reset();
+    this.diagnosis = null;
+    this.repeatedFailures = 0;
+    this.lastFailureSignature = null;
     this.record(`${slot.name}: connected${idx > 0 ? ' (fallback)' : ''}`);
     this.setStatus('running');
+    void this.selfTest(t);
+  }
+
+  /**
+   * Distinguish "WhatsApp changed something" (the same code-level error every time) from
+   * transient trouble, and say so plainly in status instead of hiding it in retries.
+   */
+  private classifyStartFailure(transport: string, message: string): void {
+    const signature = message.replace(/\d+/g, '#').slice(0, 200);
+    this.repeatedFailures = signature === this.lastFailureSignature ? this.repeatedFailures + 1 : 1;
+    this.lastFailureSignature = signature;
+    const codeLevel = INCOMPATIBILITY.test(message);
+    if (codeLevel && this.repeatedFailures >= 2) {
+      this.diagnosis =
+        `${transport} fails the same way on every start ("${message.slice(0, 160)}"). ` +
+        'This usually means WhatsApp Web changed and the library needs an update; retrying alone will not fix it.';
+      if (this.repeatedFailures === 2)
+        this.log.error('incompatibility suspected', { transport, message });
+    } else if (this.repeatedFailures >= 3) {
+      this.diagnosis = `${transport} keeps failing to start: ${message.slice(0, 160)}`;
+    }
+  }
+
+  /**
+   * Read-only probes right after connecting, so a feature broken by a WhatsApp change is known
+   * within seconds (and reported by whatsapp_status) instead of when the user next needs it.
+   */
+  private async selfTest(t: WhatsAppTransport): Promise<void> {
+    const failed: { capability: Capability; error: string }[] = [];
+    const probe = async (cap: Capability, fn: () => Promise<unknown>) => {
+      try {
+        await withTimeout(`self-test ${cap}`, Math.min(this.opts.opTimeoutMs, 30_000), fn);
+      } catch (err) {
+        if (isBridgeError(err) && CALLER_ERRORS.has(err.code)) return;
+        const error = describe(err);
+        failed.push({ capability: cap, error });
+        this.health.trip(cap, `self-test: ${error}`);
+      }
+    };
+    let firstChat: string | undefined;
+    await probe('listChats', async () => {
+      firstChat = (await t.listChats({ limit: 1, includeArchived: false }))[0]?.id;
+    });
+    if (firstChat) await probe('getMessages', () => t.getMessages(firstChat!, { limit: 1 }));
+    await probe('searchContacts', () => t.searchContacts('a', { limit: 1 }));
+    await probe('searchMessages', () => t.searchMessages('a', { limit: 1 }));
+    if (t !== this.transport) return; // replaced meanwhile
+    this.selfTestResult = { at: this.clock.now(), failed };
+    if (failed.length) {
+      this.record(`self-test: ${failed.map((f) => f.capability).join(', ')} broken`);
+      this.log.error('post-connect self-test found broken features', { failed });
+    } else {
+      this.record('self-test: all read features OK');
+    }
   }
 
   private onTransportState(t: WhatsAppTransport, s: ConnectionState): void {

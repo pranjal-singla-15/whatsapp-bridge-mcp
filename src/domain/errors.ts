@@ -34,10 +34,12 @@ export class BridgeError extends Error {
 }
 
 export const errors = {
-  notConnected: (state: string) =>
+  notConnected: (state: string, cause?: string | null) =>
     new BridgeError(
       'NOT_CONNECTED',
-      `WhatsApp is not connected (state: ${state}). It reconnects automatically; try again shortly or run the whatsapp_status tool.`,
+      cause
+        ? `WhatsApp is not connected (state: ${state}). Connecting keeps failing: ${cause}`
+        : `WhatsApp is not connected (state: ${state}). It reconnects automatically; try again shortly or run the whatsapp_status tool.`,
       { retryable: true },
     ),
   loggedOut: () =>

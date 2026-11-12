@@ -59,6 +59,15 @@ export class FeatureHealth {
     e.lastSuccessAt = this.clock.now();
   }
 
+  /** Open the breaker immediately (e.g. a post-connect self-test proved the feature broken). */
+  trip(cap: Capability, error: string): void {
+    const e = this.get(cap);
+    e.consecutiveFailures = Math.max(e.consecutiveFailures, this.threshold);
+    e.lastError = error;
+    e.state = 'open';
+    e.retryAt = this.clock.now() + this.cooldownMs;
+  }
+
   failure(cap: Capability, error: string): void {
     const e = this.get(cap);
     e.consecutiveFailures += 1;
