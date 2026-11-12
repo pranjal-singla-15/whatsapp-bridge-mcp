@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-12
+
 ### Fixed
 
 - wwebjs: sending threw after delivering and message ids were `undefined`. WhatsApp Web renamed `MsgKey#_serialized`; a feature-detected compatibility shim restores it, and ids are rebuilt from their parts on the Node side.

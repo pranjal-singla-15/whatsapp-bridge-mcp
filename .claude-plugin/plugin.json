@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Read, search and (safely) send WhatsApp messages from Claude Code. Self-healing connection, read-only by default, confirm-before-send.",
   "author": {
     "name": "pranjal-singla-15"
