@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "npx",
+      "args": ["-y", "whatsapp-bridge-mcp@latest"]
+    }
+  }
+}

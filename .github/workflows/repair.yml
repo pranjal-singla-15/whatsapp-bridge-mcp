@@ -1,0 +1,161 @@
+name: Auto-repair
+
+# Autonomous maintenance by a headless Claude Code agent. No human approval: the agent's
+# change must pass the protected-path guard, the full test suite, the stdio smoke test and the
+# live canary before it is merged and released. Otherwise nothing is released.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: repair (canary failing) or upgrade (proactive dependency upgrade)
+        type: choice
+        options: [repair, upgrade]
+        default: repair
+      canary_run_id:
+        description: Canary run whose report triggered this repair
+        required: false
+  schedule:
+    - cron: '41 3 * * 1' # weekly proactive upgrade check
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: repair
+  cancel-in-progress: false
+
+env:
+  MODE: ${{ inputs.mode || 'upgrade' }}
+  MAX_ATTEMPTS_PER_DAY: '4'
+  WA_BRIDGE_PROFILE: canary
+  WA_BRIDGE_SEND_ENABLED: 'true'
+  WA_BRIDGE_REQUIRE_CONFIRMATION: 'false'
+  WA_BRIDGE_CANARY_TARGET: ${{ vars.CANARY_TARGET }}
+  WA_BRIDGE_LOG_LEVEL: warn
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Preconditions (lock, budget, credentials)
+        id: pre
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          skip() { echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Skipping: $1" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
+          [ "$HAS_KEY" = "true" ] || skip "ANTHROPIC_API_KEY secret not configured"
+          [ "${{ vars.CANARY_ENABLED }}" = "true" ] || skip "canary not bootstrapped (no way to verify a fix)"
+          open=$(gh pr list --label auto-repair --state open --json number -q length)
+          [ "$open" = "0" ] || skip "an auto-repair PR is already open"
+          since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          recent=$(gh run list --workflow repair.yml --created ">$since" --json databaseId -q length)
+          [ "$recent" -le "$MAX_ATTEMPTS_PER_DAY" ] || skip "daily attempt budget exhausted"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.pre.outputs.skip == 'false'
+        with:
+          fetch-depth: 0
+          persist-credentials: false # the agent must not see a push-capable token
+
+      - uses: ./.github/actions/setup
+        if: steps.pre.outputs.skip == 'false'
+        with:
+          restore-session: 'true'
+          session-key: ${{ secrets.CANARY_SESSION_KEY }}
+          gh-token: ${{ github.token }}
+
+      - name: Fetch triggering canary report
+        if: steps.pre.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ inputs.canary_run_id }}" ]; then
+            gh run download "${{ inputs.canary_run_id }}" -n canary-report -D "$RUNNER_TEMP/report" || true
+          fi
+          cat "$RUNNER_TEMP/report/canary-report.json" 2>/dev/null > "$RUNNER_TEMP/report.json" || echo '{"note":"no report (upgrade mode)"}' > "$RUNNER_TEMP/report.json"
+
+      - name: Run repair agent (headless Claude Code)
+        if: steps.pre.outputs.skip == 'false'
+        id: agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ vars.REPAIR_MODEL || 'claude-opus-5-5' }}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          git switch -c "auto-repair/${{ github.run_id }}"
+          python3 - <<'PY' > "$RUNNER_TEMP/prompt.md"
+          import os, pathlib
+          p = pathlib.Path('.github/repair-prompt.md').read_text()
+          r = pathlib.Path(os.environ['RUNNER_TEMP'], 'report.json').read_text()[:20000]
+          print(p.replace('{{MODE}}', os.environ['MODE']).replace('{{REPORT}}', r))
+          PY
+          set +e
+          claude -p "$(cat "$RUNNER_TEMP/prompt.md")" \
+            --model "$MODEL" \
+            --max-turns 80 \
+            --permission-mode acceptEdits \
+            --allowedTools "Read,Edit,Write,Glob,Grep,WebFetch,Bash(npm ci),Bash(npm install *),Bash(npm view *),Bash(npm run *),Bash(node dist/index.js *),Bash(node scripts/smoke.mjs),Bash(npx vitest *),Bash(npx tsc *),Bash(git diff *),Bash(git status),Bash(git checkout -- *),Bash(ls *),Bash(cat *)" \
+            --output-format text | tee "$RUNNER_TEMP/agent.log"
+          set -e
+          {
+            echo '### Agent summary'
+            tail -c 6000 "$RUNNER_TEMP/agent.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit candidate
+        if: steps.agent.outputs.changed == 'true'
+        run: |
+          git config user.name "whatsapp-bridge-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(transport): automated ${MODE} (run ${{ github.run_id }})"
+
+      # ---------------- verification gates (every one must pass) ----------------
+      - name: 'Gate 1: protected-path guard'
+        if: steps.agent.outputs.changed == 'true'
+        run: node scripts/guard-protected-paths.mjs origin/main
+      - name: 'Gate 2: typecheck, lint, tests'
+        if: steps.agent.outputs.changed == 'true'
+        run: npm ci && npm run check
+      - name: 'Gate 3: build + stdio smoke test'
+        if: steps.agent.outputs.changed == 'true'
+        run: npm run build && node scripts/smoke.mjs
+      - name: 'Gate 4: live canary on the candidate'
+        if: steps.agent.outputs.changed == 'true'
+        run: node dist/index.js canary --profile canary --report "$RUNNER_TEMP/candidate-report.json"
+
+      - name: Merge and release
+        if: steps.agent.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git push -u origin HEAD
+          gh label create auto-repair --color 0E8A16 2>/dev/null || true
+          body=$(printf 'Automated %s by the repair agent.\n\nPassed: protected-path guard, full test suite, stdio smoke test, live canary.\n\n<details><summary>Agent summary</summary>\n\n```\n%s\n```\n</details>\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)' "$MODE" "$(tail -c 4000 "$RUNNER_TEMP/agent.log")")
+          gh pr create --title "fix(transport): automated ${MODE}" --body "$body" --label auto-repair --base main
+          gh pr merge --squash --delete-branch
+          gh workflow run release.yml -f reason="auto-${MODE} (run ${{ github.run_id }})"
+
+      - name: Record failed attempt
+        if: failure() && steps.agent.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create canary-failure --color B60205 2>/dev/null || true
+          n=$(gh issue list --label canary-failure --state open --json number -q '.[0].number')
+          msg="Auto-${MODE} attempt ${{ github.run_id }} produced a candidate that failed verification; nothing was released. Will retry on the next canary failure."
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$msg"; fi

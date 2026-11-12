@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+
+# WhatsApp sessions must never be committed
+.wwebjs_auth/
+.wwebjs_cache/
+.whatsapp-bridge/
+*.session
+canary-session*.tar*
+*.mcpb

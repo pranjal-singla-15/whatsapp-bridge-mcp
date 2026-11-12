@@ -1,0 +1,33 @@
+name: Setup bridge
+description: Install Node, dependencies and build; optionally restore the encrypted canary session.
+
+inputs:
+  restore-session:
+    description: Decrypt the canary WhatsApp session into the canary profile
+    default: 'false'
+  session-key:
+    description: CANARY_SESSION_KEY secret
+    default: ''
+  gh-token:
+    description: Token used to download the session release asset
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        registry-url: https://registry.npmjs.org
+    - shell: bash
+      run: npm ci && npm run build
+    - if: inputs.restore-session == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        CANARY_SESSION_KEY: ${{ inputs.session-key }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/session"
+        gh release download canary-session -p canary-session.enc -D "$RUNNER_TEMP/session" --clobber
+        node scripts/session-crypt.mjs unpack "$RUNNER_TEMP/session/canary-session.enc" "$HOME/.whatsapp-bridge/profiles/canary/wwebjs"

@@ -1,0 +1,175 @@
+name: Canary
+
+# Live end-to-end test against the dedicated TEST number, every 6 hours.
+# Success -> refresh session, record known-good WhatsApp Web build, promote soaked release.
+# Failure -> roll back a bad release if the previous one still works; otherwise start auto-repair.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+env:
+  WA_BRIDGE_PROFILE: canary
+  WA_BRIDGE_SEND_ENABLED: 'true'
+  WA_BRIDGE_REQUIRE_CONFIRMATION: 'false'
+  WA_BRIDGE_CANARY_TARGET: ${{ vars.CANARY_TARGET }}
+  WA_BRIDGE_LOG_LEVEL: warn
+
+jobs:
+  canary:
+    if: vars.CANARY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      ok: ${{ steps.run.outputs.ok }}
+      logged_out: ${{ steps.run.outputs.logged_out }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          restore-session: 'true'
+          session-key: ${{ secrets.CANARY_SESSION_KEY }}
+          gh-token: ${{ github.token }}
+
+      - name: Run canary
+        id: run
+        run: |
+          set +e
+          node dist/index.js canary --profile canary --report canary-report.json
+          code=$?
+          echo "ok=$([ $code -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "logged_out=$(grep -q LOGGED_OUT canary-report.json && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Canary report'
+            echo '```json'
+            cat canary-report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canary-report
+          path: canary-report.json
+          retention-days: 30
+
+      - name: Save refreshed session
+        if: steps.run.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY_SESSION_KEY: ${{ secrets.CANARY_SESSION_KEY }}
+        run: |
+          node scripts/session-crypt.mjs pack "$HOME/.whatsapp-bridge/profiles/canary/wwebjs" "$RUNNER_TEMP/canary-session.enc"
+          gh release upload canary-session "$RUNNER_TEMP/canary-session.enc" --clobber
+
+      - name: Record known-good WhatsApp Web build
+        if: steps.run.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(node scripts/update-pins.mjs canary-report.json)" = "changed" ]; then
+            git config user.name "whatsapp-bridge-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/transport/wwebjs/pins.json
+            git commit -m "chore(pins): mark WhatsApp Web $(jq -r .remoteVersion canary-report.json) known-good"
+            git push
+            gh workflow run release.yml -f reason="new known-good WhatsApp Web build"
+          fi
+
+  on-success:
+    needs: canary
+    if: needs.canary.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Promote soaked release (next -> latest)
+        if: env.HAS_NPM == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/dist-tags.mjs promote "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Close open canary-failure issues
+        run: |
+          for n in $(gh issue list --label canary-failure --state open --json number -q '.[].number'); do
+            gh issue close "$n" --comment "Canary is healthy again (run ${{ github.run_id }})."
+          done
+
+  on-failure:
+    needs: canary
+    if: needs.canary.outputs.ok == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          restore-session: 'true'
+          session-key: ${{ secrets.CANARY_SESSION_KEY }}
+          gh-token: ${{ github.token }}
+
+      - name: Needs a human? (test number logged out)
+        if: needs.canary.outputs.logged_out == 'true'
+        run: |
+          gh label create canary-failure --color B60205 2>/dev/null || true
+          open=$(gh issue list --label canary-failure --state open --search "re-link in:title" --json number -q length)
+          if [ "$open" = "0" ]; then
+            gh issue create --label canary-failure --title "Canary: test number must be re-linked" \
+              --body 'The test number session was logged out; code cannot fix this. Run locally: `node scripts/canary-bootstrap.mjs <test-number>`'
+          fi
+
+      - name: Roll back if the previous stable release still works
+        if: needs.canary.outputs.logged_out != 'true' && env.HAS_NPM == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          prev=$(npm view whatsapp-bridge-mcp dist-tags.prev-stable 2>/dev/null || true)
+          latest=$(npm view whatsapp-bridge-mcp dist-tags.latest 2>/dev/null || true)
+          if [ -n "$prev" ] && [ "$prev" != "$latest" ]; then
+            if npx -y "whatsapp-bridge-mcp@$prev" canary --profile canary; then
+              node scripts/dist-tags.mjs rollback
+            fi
+          fi
+
+      - name: Open/update tracking issue and start auto-repair
+        if: needs.canary.outputs.logged_out != 'true'
+        run: |
+          gh label create canary-failure --color B60205 2>/dev/null || true
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          existing=$(gh issue list --label canary-failure --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: $url"
+          else
+            gh issue create --label canary-failure --title "Canary failing" --body "Canary failed: $url. Auto-repair has been started."
+          fi
+          gh workflow run repair.yml -f mode=repair -f canary_run_id=${{ github.run_id }}
+
+  watch-the-watchdog:
+    # Each scheduler re-enables the others, so no single disabled workflow stops self-healing.
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          for w in watchdog.yml repair.yml release.yml; do gh workflow enable "$w" || true; done

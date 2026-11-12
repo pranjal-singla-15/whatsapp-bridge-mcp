@@ -1,0 +1,67 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/dist/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "whatsapp-bridge-mcp",
+  "display_name": "WhatsApp Bridge",
+  "version": "0.1.0",
+  "description": "Read, search and safely send WhatsApp messages. Self-healing connection; read-only by default.",
+  "long_description": "Links to your WhatsApp account as a linked device (like WhatsApp Web) and exposes tools to list chats, read and search messages, find contacts and send messages. Sending is off by default; when enabled every message needs your explicit confirmation, unknown numbers are blocked and rate limits apply to protect your account. Uses an installed Chrome or Edge browser.",
+  "author": { "name": "pranjal-singla-15" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp"
+  },
+  "homepage": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp",
+  "license": "MIT",
+  "keywords": ["whatsapp", "messaging", "chat"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "WA_BRIDGE_SEND_ENABLED": "${user_config.send_enabled}",
+        "WA_BRIDGE_ALLOW_UNKNOWN_RECIPIENTS": "${user_config.allow_unknown_recipients}",
+        "WA_BRIDGE_BROWSER_PATH": "${user_config.browser_path}",
+        "PUPPETEER_SKIP_DOWNLOAD": "true"
+      }
+    }
+  },
+  "tools": [
+    { "name": "whatsapp_status", "description": "Connection state and health" },
+    { "name": "whatsapp_login", "description": "Link this device with a QR code" },
+    { "name": "whatsapp_list_chats", "description": "List chats" },
+    { "name": "whatsapp_get_messages", "description": "Read messages of a chat" },
+    { "name": "whatsapp_search_messages", "description": "Search messages" },
+    { "name": "whatsapp_search_contacts", "description": "Search contacts" },
+    { "name": "whatsapp_mark_read", "description": "Mark a chat as read" },
+    { "name": "whatsapp_send_message", "description": "Prepare a message (preview)" },
+    { "name": "whatsapp_confirm_send", "description": "Send a prepared message after approval" }
+  ],
+  "user_config": {
+    "send_enabled": {
+      "type": "boolean",
+      "title": "Allow sending messages",
+      "description": "Off = read-only. When on, every message still needs your confirmation.",
+      "default": false
+    },
+    "allow_unknown_recipients": {
+      "type": "boolean",
+      "title": "Allow messaging numbers you never chatted with",
+      "description": "Not recommended: messaging strangers is the most common cause of WhatsApp bans.",
+      "default": false
+    },
+    "browser_path": {
+      "type": "file",
+      "title": "Chrome/Edge executable (optional)",
+      "description": "Leave empty to auto-detect.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=20.0.0" }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "whatsapp-bridge",
+  "owner": { "name": "pranjal-singla-15" },
+  "plugins": [
+    {
+      "name": "whatsapp-bridge",
+      "source": "./",
+      "description": "Self-healing WhatsApp MCP server: read chats, search, and send with built-in safety limits."
+    }
+  ]
+}

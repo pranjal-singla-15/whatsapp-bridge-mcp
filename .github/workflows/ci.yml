@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true' # unit tests never launch a browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+        if: matrix.os == 'ubuntu-latest'
+      - run: npm run test:coverage
+      - run: npm run build
+      - name: Smoke test built package over stdio
+        run: node scripts/smoke.mjs
+
+  guard:
+    # Autonomous repair branches may only touch allow-listed paths (see scripts/guard-protected-paths.mjs).
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'auto-repair/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node scripts/guard-protected-paths.mjs origin/${{ github.base_ref }}

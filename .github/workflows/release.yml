@@ -1,0 +1,78 @@
+name: Release
+
+# Publishes a patch release to npm under the `next` dist-tag. The canary promotes it to
+# `latest` (what users get) only after it has soaked and passed live checks; see canary.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this release is being cut
+        default: manual
+  push:
+    branches: [main]
+    paths: ['src/**', 'package.json', 'package-lock.json']
+
+permissions:
+  contents: write
+  id-token: write # npm provenance
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Skip the bot's own version-bump commits.
+    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' && 'true' || 'false' }}
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - run: npm run check && node scripts/smoke.mjs
+
+      - name: Bump patch version and tag
+        id: bump
+        run: |
+          git config user.name "whatsapp-bridge-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          version=$(npm version patch -m "chore(release): v%s [skip ci]")
+          node -e "
+            const fs=require('fs');const v=process.argv[1].slice(1);
+            const f='CHANGELOG.md';const s=fs.readFileSync(f,'utf8');
+            const d=new Date().toISOString().slice(0,10);
+            fs.writeFileSync(f,s.replace('## [Unreleased]','## [Unreleased]\n\n## ['+v+'] - '+d));
+          " "$version"
+          git add CHANGELOG.md && git commit --amend --no-edit
+          git tag -f "$version"
+          git push origin HEAD:main --follow-tags
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm (next)
+        if: env.HAS_NPM == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          provenance=$([ "${{ github.event.repository.private }}" = "false" ] && echo "--provenance" || echo "")
+          npm run build
+          npm publish --access public --tag next $provenance
+          # First ever release: nothing to soak against, make it latest directly.
+          if ! npm view whatsapp-bridge-mcp dist-tags.latest >/dev/null 2>&1; then
+            npm dist-tag add "whatsapp-bridge-mcp@${{ steps.bump.outputs.version }}" latest
+          fi
+
+      - name: GitHub release (with Claude Desktop extension)
+        run: |
+          npm run build
+          node scripts/build-mcpb.mjs "$RUNNER_TEMP/whatsapp-bridge.mcpb"
+          gh release create "${{ steps.bump.outputs.version }}" "$RUNNER_TEMP/whatsapp-bridge.mcpb" \
+            --generate-notes --title "${{ steps.bump.outputs.version }}" \
+            --notes "Reason: ${{ inputs.reason || 'merge to main' }}"

@@ -1,0 +1,62 @@
+name: Watchdog
+
+# Keeps the self-healing machinery itself healthy:
+#  - re-enables any disabled workflow (GitHub disables schedules after 60 days of inactivity)
+#  - catches up a missed/delayed canary run
+#  - cancels runs stuck far beyond their timeout
+#  - keeps the repository "active" so schedules are never auto-disabled
+# canary.yml re-enables this workflow in turn, and an external Claude routine watches both.
+
+on:
+  schedule:
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Re-enable workflows
+        run: for w in ci.yml canary.yml repair.yml release.yml; do gh workflow enable "$w" || true; done
+
+      - name: Cancel stuck runs
+        run: |
+          cutoff=$(date -u -d '3 hours ago' +%s)
+          for w in canary.yml repair.yml release.yml; do
+            gh run list --workflow "$w" --status in_progress --json databaseId,createdAt \
+              -q '.[] | "\(.databaseId) \(.createdAt)"' | while read -r id created; do
+              [ "$(date -u -d "$created" +%s)" -lt "$cutoff" ] && gh run cancel "$id" && echo "cancelled stuck run $id"
+            done
+          done
+
+      - name: Catch up a missed canary
+        if: vars.CANARY_ENABLED == 'true'
+        run: |
+          last=$(gh run list --workflow canary.yml --limit 1 --json createdAt -q '.[0].createdAt')
+          if [ -z "$last" ] || [ "$(date -u -d "$last" +%s)" -lt "$(date -u -d '8 hours ago' +%s)" ]; then
+            echo "canary overdue (last: ${last:-never}); dispatching"
+            gh workflow run canary.yml
+          fi
+
+      - uses: actions/checkout@v4
+      - name: Keep repository active
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ "$last" -lt "$(date -u -d '45 days ago' +%s)" ]; then
+            git config user.name "whatsapp-bridge-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keepalive [skip ci]"
+            git push
+          fi
