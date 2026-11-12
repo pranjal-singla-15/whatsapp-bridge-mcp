@@ -44,7 +44,9 @@ jobs:
           git config user.name "whatsapp-bridge-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin main
-          version=$(npm version patch -m "chore(release): v%s [skip ci]")
+          npm version patch -m "chore(release): v%s [skip ci]" >/dev/null
+          # Read it back: `npm version` output also contains lifecycle-script logs.
+          version="v$(node -p "require('./package.json').version")"
           node -e "
             const fs=require('fs');const v=process.argv[1].slice(1);
             const f='CHANGELOG.md';const s=fs.readFileSync(f,'utf8');
