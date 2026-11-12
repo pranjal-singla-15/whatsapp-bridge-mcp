@@ -16,13 +16,13 @@ issues: re-linking a logged-out test number, and dealing with a banned number.
 
 ## Workflows
 
-| Workflow       | Trigger                | Purpose                                                                                                                                        |
-| -------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push / PR              | Typecheck, lint, format, tests with coverage gates, build, stdio smoke test (Linux, Windows, macOS × Node 20/22). Guard on `auto-repair/*` PRs |
-| `canary.yml`   | every 6h               | Live end-to-end test. Success: refresh session, record pins, promote. Failure: roll back or start repair                                       |
-| `repair.yml`   | canary failure, weekly | Headless Claude Code fixes or upgrades the transport. Merged only if every gate passes                                                         |
-| `release.yml`  | dispatch / human push  | Patch bump, npm publish under `next`, GitHub release with the `.mcpb`                                                                          |
-| `watchdog.yml` | every 6h               | Keeps the scheduler itself healthy                                                                                                             |
+| Workflow       | Trigger                | Purpose                                                                                                                        |
+| -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `ci.yml`       | push / PR              | Typecheck, lint, format, tests with coverage gates, build, stdio smoke test (Linux × Node 20/22). Guard on `auto-repair/*` PRs |
+| `canary.yml`   | every 6h               | Live end-to-end test. Success: refresh session, record pins, promote. Failure: roll back or start repair                       |
+| `repair.yml`   | canary failure, weekly | Headless Claude Code fixes or upgrades the transport. Merged only if every gate passes                                         |
+| `release.yml`  | dispatch / human push  | Patch bump, npm publish under `next`, GitHub release with the `.mcpb`                                                          |
+| `watchdog.yml` | every 6h               | Keeps the scheduler itself healthy                                                                                             |
 
 ### Why it can't duplicate or overlap
 

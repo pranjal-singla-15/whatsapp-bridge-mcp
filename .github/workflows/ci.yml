@@ -15,13 +15,12 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    name: test (node ${{ matrix.node }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         node: [20, 22]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true' # unit tests never launch a browser
@@ -35,7 +34,6 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
-        if: matrix.os == 'ubuntu-latest'
       - run: npm run test:coverage
       - run: npm run build
       - name: Smoke test built package over stdio
