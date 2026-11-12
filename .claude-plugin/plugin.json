@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read, search and (safely) send WhatsApp messages from Claude Code. Self-healing connection, read-only by default, confirm-before-send.",
   "author": {
     "name": "pranjal-singla-15"
@@ -8,11 +8,18 @@
   "homepage": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp",
   "repository": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp",
   "license": "MIT",
-  "keywords": ["whatsapp", "messaging", "mcp"],
+  "keywords": [
+    "whatsapp",
+    "messaging",
+    "mcp"
+  ],
   "mcpServers": {
     "whatsapp": {
       "command": "npx",
-      "args": ["-y", "whatsapp-bridge-mcp@latest"]
+      "args": [
+        "-y",
+        "whatsapp-bridge-mcp@latest"
+      ]
     }
   }
 }

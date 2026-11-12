@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-12
+
 ### Fixed
 
 - wwebjs: listing chats, reading messages and marking read failed on current WhatsApp Web builds (whatsapp-web.js 1.34.7 builds the chat's last message with an empty IndexedDB key). Chats are now read with a minimal in-page serialiser.
