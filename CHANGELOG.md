@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-12
+
 ### Added
 
 - Fail fast: while connecting keeps failing, calls are rejected immediately with the real cause instead of waiting for a timeout.

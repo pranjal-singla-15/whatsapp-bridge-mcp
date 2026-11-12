@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "whatsapp-bridge-mcp",
   "display_name": "WhatsApp Bridge",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Read, search and safely send WhatsApp messages. Self-healing connection; read-only by default.",
   "long_description": "Links to your WhatsApp account as a linked device (like WhatsApp Web) and exposes tools to list chats, read and search messages, find contacts and send messages. Sending is off by default; when enabled every message needs your explicit confirmation, unknown numbers are blocked and rate limits apply to protect your account. Uses an installed Chrome or Edge browser.",
   "author": {
