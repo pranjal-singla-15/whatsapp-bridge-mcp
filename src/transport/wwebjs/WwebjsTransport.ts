@@ -17,6 +17,7 @@ import type { Logger } from '../../logger.js';
 import { Emitter } from '../../util/emitter.js';
 import type { WhatsAppTransport } from '../transport.js';
 import { findBrowser } from './browser.js';
+import { applyCompatShims, serializedMsgId } from './compat.js';
 import type { VersionSelector, WebVersion } from './versionSelector.js';
 
 const { Client, LocalAuth, MessageMedia } = wwebjs;
@@ -157,6 +158,9 @@ export class WwebjsTransport implements WhatsAppTransport {
       throw err;
     }
 
+    await this.applyShims(client, log);
+    // WhatsApp Web can reload itself; wwebjs re-injects and emits 'ready' again.
+    client.on('ready', () => void this.applyShims(client, log));
     this.remoteVersion = await client.getWWebVersion().catch(() => null);
     this.opts.versions.markGood(this.webVersion);
     this.setState('connected');
@@ -275,8 +279,10 @@ export class WwebjsTransport implements WhatsAppTransport {
             isBusiness: Boolean(c.isBusiness),
           });
         }
-        out.sort((a, b) => Number(b.isMyContact) - Number(a.isMyContact));
-        return out.slice(0, limit);
+        // One person can exist as both a phone-number and a LID contact; keep one entry per id.
+        const unique = [...new Map(out.map((x) => [x.id, x])).values()];
+        unique.sort((a, b) => Number(b.isMyContact) - Number(a.isMyContact));
+        return unique.slice(0, limit);
       },
       query,
       opts.limit,
@@ -296,7 +302,7 @@ export class WwebjsTransport implements WhatsAppTransport {
     const m = await this.requireClient().sendMessage(chatId, text, {
       ...(opts?.quotedMessageId ? { quotedMessageId: opts.quotedMessageId } : {}),
     });
-    return { id: m.id._serialized, chatId, timestamp: m.timestamp * 1000 };
+    return { id: serializedMsgId(m.id), chatId, timestamp: m.timestamp * 1000 };
   }
 
   async sendMedia(
@@ -308,7 +314,7 @@ export class WwebjsTransport implements WhatsAppTransport {
     const m = await this.requireClient().sendMessage(chatId, media, {
       ...(opts?.caption ? { caption: opts.caption } : {}),
     });
-    return { id: m.id._serialized, chatId, timestamp: m.timestamp * 1000 };
+    return { id: serializedMsgId(m.id), chatId, timestamp: m.timestamp * 1000 };
   }
 
   async markRead(chatId: ChatId): Promise<void> {
@@ -317,6 +323,15 @@ export class WwebjsTransport implements WhatsAppTransport {
   }
 
   // ---------------------------------------------------------------- internals
+
+  private async applyShims(client: WClient, log: Logger): Promise<void> {
+    try {
+      const applied = await applyCompatShims(client);
+      if (applied.length) log.info('applied WhatsApp Web compatibility shims', { applied });
+    } catch (err) {
+      log.warn('could not apply compatibility shims', { err });
+    }
+  }
 
   private requireClient(): WClient {
     if (this.current === 'logged_out') throw errors.loggedOut();
@@ -444,7 +459,7 @@ function toMessage(m: WMessage, chatId?: ChatId): Message {
   const raw = m as unknown as { _data?: { notifyName?: string; quotedStanzaID?: string } };
   const resolvedChatId = chatId ?? (m.fromMe ? m.to : m.from);
   return {
-    id: m.id._serialized,
+    id: serializedMsgId(m.id),
     chatId: resolvedChatId,
     senderId: m.fromMe ? 'me' : (m.author ?? m.from),
     senderName: m.fromMe ? null : (raw._data?.notifyName ?? null),
