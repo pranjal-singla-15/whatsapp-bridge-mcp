@@ -8,18 +8,11 @@
   "homepage": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp",
   "repository": "https://github.com/pranjal-singla-15/whatsapp-bridge-mcp",
   "license": "MIT",
-  "keywords": [
-    "whatsapp",
-    "messaging",
-    "mcp"
-  ],
+  "keywords": ["whatsapp", "messaging", "mcp"],
   "mcpServers": {
     "whatsapp": {
       "command": "npx",
-      "args": [
-        "-y",
-        "whatsapp-bridge-mcp@latest"
-      ]
+      "args": ["-y", "whatsapp-bridge-mcp@latest"]
     }
   }
 }
