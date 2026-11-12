@@ -1,6 +1,9 @@
 {
   "name": "whatsapp-bridge",
-  "owner": { "name": "pranjal-singla-15" },
+  "description": "WhatsApp for Claude Code: a self-healing MCP server with confirm-before-send safety.",
+  "owner": {
+    "name": "pranjal-singla-15"
+  },
   "plugins": [
     {
       "name": "whatsapp-bridge",

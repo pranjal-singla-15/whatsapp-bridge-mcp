@@ -21,7 +21,7 @@ chats, search messages and contacts, and send messages with safety rules built i
 
 ## Install
 
-### Claude Code (plugin)
+### Claude Code (plugin, after the first npm release)
 
 ```text
 /plugin marketplace add pranjal-singla-15/whatsapp-bridge-mcp
