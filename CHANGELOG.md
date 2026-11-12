@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-12
+
 ### Fixed
 
 - wwebjs: intermittent startup crash "Cannot read properties of null (reading 'Socket')" on WhatsApp Web 2.3000.10542xxxxx; the client now waits for the socket model before injecting.
