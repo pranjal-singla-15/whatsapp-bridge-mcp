@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+
+- wwebjs: intermittent startup crash "Cannot read properties of null (reading 'Socket')" on WhatsApp Web 2.3000.10542xxxxx; the client now waits for the socket model before injecting.
+- Never auto-restore the session backup: rolling back WhatsApp's encryption state got the device unlinked. The backup is kept for manual recovery only.
+- Saved contacts addressed by id (`<number>@c.us`) were rejected as unknown recipients when the chat lives under a LID id.
+
 ## [0.1.2] - 2026-11-12
 
 ### Fixed

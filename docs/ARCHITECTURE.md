@@ -31,17 +31,17 @@ Rules:
 
 ## Self-healing at runtime
 
-| Failure                                      | Mechanism                                                                         | Where                                 |
-| -------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------- |
-| Connection drop / WhatsApp restart           | exponential backoff with jitter, unlimited retries                                | `Supervisor.connectLoop`              |
-| Browser hangs / page crash                   | watchdog probe every 60s; two failures rebuild the transport                      | `Supervisor.tick`                     |
-| Hung call                                    | per-operation timeout                                                             | `Supervisor.exec`                     |
-| A WhatsApp change breaks one feature         | per-capability circuit breaker with half-open trials; other features keep working | `FeatureHealth`                       |
-| Bad WhatsApp Web build                       | rotate through pinned known-good builds, then live; remember the last good one    | `VersionSelector`                     |
-| Corrupted session                            | restore the last-known-good session copy after repeated start failures            | `SessionVault`                        |
-| Primary transport broken                     | fail over to Baileys, retry the primary after 30 min                              | `Supervisor.pickSlot` / `tick`        |
-| Logged out elsewhere, then re-linked via CLI | while logged out, re-check every 30s                                              | `Supervisor.revive`                   |
-| Send errored but may have been delivered     | look for the message in the chat before allowing a retry                          | `WhatsAppService.reconcileFailedSend` |
+| Failure                                      | Mechanism                                                                                                                      | Where                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| Connection drop / WhatsApp restart           | exponential backoff with jitter, unlimited retries                                                                             | `Supervisor.connectLoop`              |
+| Browser hangs / page crash                   | watchdog probe every 60s; two failures rebuild the transport                                                                   | `Supervisor.tick`                     |
+| Hung call                                    | per-operation timeout                                                                                                          | `Supervisor.exec`                     |
+| A WhatsApp change breaks one feature         | per-capability circuit breaker with half-open trials; other features keep working                                              | `FeatureHealth`                       |
+| Bad WhatsApp Web build                       | rotate through pinned known-good builds, then live; remember the last good one                                                 | `VersionSelector`                     |
+| Corrupted session                            | last-known-good copy kept for **manual** recovery only (auto-restore rolled back encryption state and got the device unlinked) | `SessionVault`                        |
+| Primary transport broken                     | fail over to Baileys, retry the primary after 30 min                                                                           | `Supervisor.pickSlot` / `tick`        |
+| Logged out elsewhere, then re-linked via CLI | while logged out, re-check every 30s                                                                                           | `Supervisor.revive`                   |
+| Send errored but may have been delivered     | look for the message in the chat before allowing a retry                                                                       | `WhatsAppService.reconcileFailedSend` |
 
 Failures that need a human (logged out, account banned) are reported clearly by `whatsapp_status`
 and in tool errors. The supervisor does not loop on them.

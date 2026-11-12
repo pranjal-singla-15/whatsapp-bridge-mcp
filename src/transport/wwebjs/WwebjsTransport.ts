@@ -17,10 +17,10 @@ import type { Logger } from '../../logger.js';
 import { Emitter } from '../../util/emitter.js';
 import type { WhatsAppTransport } from '../transport.js';
 import { findBrowser } from './browser.js';
-import { applyCompatShims, serializedMsgId } from './compat.js';
+import { applyCompatShims, ResilientClient, serializedMsgId } from './compat.js';
 import type { VersionSelector, WebVersion } from './versionSelector.js';
 
-const { Client, LocalAuth, MessageMedia } = wwebjs;
+const { LocalAuth, MessageMedia } = wwebjs;
 /** Exported at runtime but missing from the library's type definitions. */
 const WChatClass = (
   wwebjs as unknown as {
@@ -81,7 +81,7 @@ export class WwebjsTransport implements WhatsAppTransport {
     this.webVersion = this.opts.versions.current();
     const log = this.opts.log.child({ webVersion: this.webVersion ?? 'live' });
 
-    const client = new Client({
+    const client = new ResilientClient({
       authStrategy: new LocalAuth({ dataPath: this.opts.sessionDir }),
       ...(this.webVersion
         ? {

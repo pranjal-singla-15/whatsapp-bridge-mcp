@@ -115,7 +115,10 @@ describe('send safety', () => {
     expect(await code(service.prepareSend({ to: '+9444444444', text: 'hi' }))).toBe(
       'RECIPIENT_NOT_ALLOWED',
     );
-    // a saved contact without history is allowed
+    // a saved contact without history is allowed, by number or by id
+    expect((await service.prepareSend({ to: '9555555555@c.us', text: 'hi' })).status).toBe(
+      'pending_confirmation',
+    );
     expect((await service.prepareSend({ to: '+9555555555', text: 'hi' })).status).toBe(
       'pending_confirmation',
     );

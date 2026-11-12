@@ -312,9 +312,10 @@ export class Supervisor {
         }
         this.failures[idx] = (this.failures[idx] ?? 0) + 1;
         this.record(`${slot.name}: start failed (${this.failures[idx]}): ${this.lastError}`);
-        if (this.failures[idx] === 2 && slot.vault && (await slot.vault.restore())) {
-          this.record(`${slot.name}: restored last-good session`);
-        }
+        // NOTE: never auto-restore the session backup here. WhatsApp's end-to-end encryption
+        // state ratchets forward; rolling it back to an older snapshot gets the device unlinked
+        // (observed 2026-11-12). Generic start failures are retried; the backup is for manual
+        // recovery only (SessionVault.restore).
         const delay = backoffDelay(
           attempt++,
           { baseMs: this.opts.reconnectBaseMs, maxMs: this.opts.reconnectMaxMs },

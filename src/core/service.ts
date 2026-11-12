@@ -144,8 +144,11 @@ export class WhatsAppService {
         });
         return { chatId: chat.id, name: chat.name, known: true };
       } catch (err) {
-        if (isBridgeError(err, 'NOT_FOUND') && s.endsWith('@c.us'))
-          return { chatId: s, name: s, known: false };
+        // No chat under this id (e.g. the conversation lives under a LID id): fall back to the
+        // address book so saved contacts are still recognised as known recipients.
+        if (isBridgeError(err, 'NOT_FOUND') && s.endsWith('@c.us')) {
+          return this.describeChatId(s, `+${s.split('@')[0]}`);
+        }
         throw err;
       }
     }

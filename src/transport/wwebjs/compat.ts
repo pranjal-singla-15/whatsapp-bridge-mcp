@@ -1,4 +1,5 @@
-import type { Client as WClient } from 'whatsapp-web.js';
+import wwebjs from 'whatsapp-web.js';
+import type { Client as WClient, ClientOptions } from 'whatsapp-web.js';
 
 /**
  * Compatibility shims for WhatsApp Web changes that whatsapp-web.js has not caught up with.
@@ -59,4 +60,41 @@ export function serializedMsgId(id: unknown): string {
   // last resort: any cached string that looks like a serialised key
   const cached = Object.values(k).find((v) => typeof v === 'string' && /^(true|false)_/.test(v));
   return typeof cached === 'string' ? cached : '';
+}
+
+type InjectableClient = WClient & { inject(): Promise<void> };
+const BaseClient = wwebjs.Client as unknown as new (options: ClientOptions) => InjectableClient;
+
+/**
+ * whatsapp-web.js client with startup-race protection.
+ *
+ * 2026-11: on WhatsApp Web 2.3000.10542xxxxx, wwebjs' inject() runs as soon as
+ * `window.Debug.VERSION` exists and immediately reads `WAWebSocketModel.Socket`, which is still
+ * null for a moment on newer builds ("Cannot read properties of null (reading 'Socket')").
+ * Wait until the socket model exists before injecting. inject() also runs on every page
+ * reload, so this covers reconnects. If it never appears we proceed anyway and let the normal
+ * error surface (and the supervisor retry).
+ */
+export class ResilientClient extends BaseClient {
+  override async inject(): Promise<void> {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const ready = await this.pupPage
+        ?.evaluate(() => {
+          const w = globalThis as unknown as {
+            Debug?: { VERSION?: string };
+            require?: (m: string) => { Socket?: unknown } | undefined;
+          };
+          try {
+            return Boolean(w.Debug?.VERSION && w.require?.('WAWebSocketModel')?.Socket);
+          } catch {
+            return false;
+          }
+        })
+        .catch(() => false);
+      if (ready) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return super.inject();
+  }
 }
