@@ -54,8 +54,8 @@ jobs:
             fs.writeFileSync(f,s.replace('## [Unreleased]','## [Unreleased]\n\n## ['+v+'] - '+d));
           " "$version"
           git add CHANGELOG.md && git commit --amend --no-edit
-          git tag -f "$version"
-          git push origin HEAD:main --follow-tags
+          git tag -f -a "$version" -m "$version"
+          git push origin HEAD:main "refs/tags/$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm (next)
