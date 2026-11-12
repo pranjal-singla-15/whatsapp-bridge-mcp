@@ -1,12 +1,7 @@
 import { createRequire } from 'node:module';
 import wwebjs from 'whatsapp-web.js';
-import type {
-  Chat as WChat,
-  Client as WClient,
-  Contact as WContact,
-  Message as WMessage,
-} from 'whatsapp-web.js';
-import { BridgeError, describe, errors } from '../../domain/errors.js';
+import type { Client as WClient, Message as WMessage } from 'whatsapp-web.js';
+import { BridgeError, errors } from '../../domain/errors.js';
 import type {
   Chat,
   ChatId,
@@ -25,6 +20,12 @@ import { findBrowser } from './browser.js';
 import type { VersionSelector, WebVersion } from './versionSelector.js';
 
 const { Client, LocalAuth, MessageMedia } = wwebjs;
+/** Exported at runtime but missing from the library's type definitions. */
+const WChatClass = (
+  wwebjs as unknown as {
+    Chat: { prototype: { fetchMessages(this: unknown, o: { limit: number }): Promise<unknown> } };
+  }
+).Chat;
 
 const REMOTE_VERSION_URL =
   'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html';
@@ -187,24 +188,31 @@ export class WwebjsTransport implements WhatsAppTransport {
   }
 
   async listChats(opts: { limit: number; includeArchived: boolean }): Promise<Chat[]> {
-    const chats = await this.requireClient().getChats();
+    const chats = await this.readChats(null);
     return chats
       .filter((c) => opts.includeArchived || !c.archived)
       .sort(
-        (a, b) => Number(b.pinned) - Number(a.pinned) || (b.timestamp ?? 0) - (a.timestamp ?? 0),
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) || (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0),
       )
-      .slice(0, opts.limit)
-      .map(toChat);
+      .slice(0, opts.limit);
   }
 
   async getChat(chatId: ChatId): Promise<Chat> {
-    return toChat(await this.fetchChat(chatId));
+    const [chat] = await this.readChats(chatId);
+    if (!chat) throw errors.notFound(`Chat ${chatId}`);
+    return chat;
   }
 
   async getMessages(chatId: ChatId, opts: { limit: number }): Promise<Message[]> {
-    const chat = await this.fetchChat(chatId);
-    const msgs = await chat.fetchMessages({ limit: opts.limit });
-    return msgs.map((m) => toMessage(m, chatId));
+    await this.getChat(chatId);
+    // wwebjs' fetchMessages only needs the chat id; calling it on a minimal receiver avoids
+    // client.getChatById(), whose full chat serialisation is broken on current WhatsApp Web.
+    const receiver = { client: this.requireClient(), id: { _serialized: chatId } };
+    const msgs = (await WChatClass.prototype.fetchMessages.call(receiver, {
+      limit: opts.limit,
+    })) as WMessage[];
+    return msgs.map((m) => toMessage(m, chatId)).sort((a, b) => a.timestamp - b.timestamp);
   }
 
   async searchMessages(
@@ -218,15 +226,61 @@ export class WwebjsTransport implements WhatsAppTransport {
     return msgs.slice(0, opts.limit).map((m) => toMessage(m));
   }
 
+  /**
+   * Filters inside the page and only serialises matches. wwebjs' getContacts() serialises every
+   * contact first (40s+ for a few thousand contacts).
+   */
   async searchContacts(query: string, opts: { limit: number }): Promise<Contact[]> {
-    const q = query.toLowerCase();
-    const contacts = await this.requireClient().getContacts();
-    return contacts
-      .filter((c) => c.isUser && !c.isGroup)
-      .filter((c) => [c.name, c.pushname, c.number].some((v) => v?.toLowerCase().includes(q)))
-      .sort((a, b) => Number(b.isMyContact) - Number(a.isMyContact))
-      .slice(0, opts.limit)
-      .map(toContact);
+    return this.requireClient().pupPage!.evaluate(
+      (q: string, limit: number) => {
+        type WaWid = { _serialized: string; user?: string; server?: string };
+        type WaContact = { id: WaWid; phoneNumber?: WaWid; isBusiness?: boolean };
+        type Getters = Record<string, ((c: WaContact) => unknown) | undefined>;
+        const w = globalThis as unknown as { require(m: string): Record<string, unknown> };
+        const call = (g: Getters, fn: string, c: WaContact): unknown => {
+          try {
+            return g[fn]?.(c);
+          } catch {
+            return undefined;
+          }
+        };
+        const getters = w.require('WAWebContactGetters') as Getters;
+        const frontend = w.require('WAWebFrontendContactGetters') as Getters;
+        const contacts = (
+          w.require('WAWebCollections').Contact as { getModelsArray(): WaContact[] }
+        ).getModelsArray();
+        const needle = q.toLowerCase();
+        const out: {
+          id: string;
+          name: string | null;
+          pushName: string | null;
+          phoneNumber: string | null;
+          isMyContact: boolean;
+          isBusiness: boolean;
+        }[] = [];
+        for (const c of contacts) {
+          const server = c.id.server;
+          if (server === 'g.us' || server === 'broadcast' || server === 'newsletter') continue;
+          const name = call(getters, 'getName', c) as string | undefined;
+          const pushname = call(getters, 'getPushname', c) as string | undefined;
+          const number = c.phoneNumber?.user ?? (server === 'c.us' ? c.id.user : undefined);
+          if (![name, pushname, number].some((v) => v?.toLowerCase().includes(needle))) continue;
+          if (call(getters, 'getIsUser', c) === false) continue;
+          out.push({
+            id: server === 'lid' && c.phoneNumber ? c.phoneNumber._serialized : c.id._serialized,
+            name: name ?? null,
+            pushName: pushname ?? null,
+            phoneNumber: number ?? null,
+            isMyContact: Boolean(call(frontend, 'getIsMyContact', c)),
+            isBusiness: Boolean(c.isBusiness),
+          });
+        }
+        out.sort((a, b) => Number(b.isMyContact) - Number(a.isMyContact));
+        return out.slice(0, limit);
+      },
+      query,
+      opts.limit,
+    );
   }
 
   async resolvePhoneNumber(phone: string): Promise<ChatId | null> {
@@ -258,7 +312,7 @@ export class WwebjsTransport implements WhatsAppTransport {
   }
 
   async markRead(chatId: ChatId): Promise<void> {
-    await this.fetchChat(chatId);
+    await this.getChat(chatId);
     await this.requireClient().sendSeen(chatId);
   }
 
@@ -270,18 +324,90 @@ export class WwebjsTransport implements WhatsAppTransport {
     return this.client;
   }
 
-  private async fetchChat(chatId: ChatId): Promise<WChat> {
-    try {
-      const chat = await this.requireClient().getChatById(chatId);
-      if (!chat) throw errors.notFound(`Chat ${chatId}`);
-      return chat;
-    } catch (err) {
-      if (err instanceof BridgeError) throw err;
-      // wwebjs throws a generic error for unknown ids; normalise it.
-      if (/not.*found|undefined|null|serialize/i.test(describe(err)))
-        throw errors.notFound(`Chat ${chatId}`);
-      throw err;
-    }
+  /**
+   * Reads chats with our own minimal in-page serialiser instead of wwebjs' getChats()/
+   * getChatById(). Those build a full model including the last message, which fails on current
+   * WhatsApp Web builds (empty IndexedDB key). Reading only the fields we need touches far fewer
+   * WhatsApp internals, so it is also less likely to break on future changes.
+   * @param only a single chat id, or null for all chats
+   */
+  private async readChats(only: ChatId | null): Promise<Chat[]> {
+    const raw = await this.requireClient().pupPage!.evaluate((id: string | null) => {
+      type WaChat = {
+        id: { _serialized: string; user?: string; server?: string };
+        formattedTitle?: string;
+        name?: string;
+        contact?: { name?: string; pushname?: string };
+        groupMetadata?: { subject?: string };
+        unreadCount?: number;
+        t?: number;
+        archive?: boolean;
+        pin?: number;
+        mute?: { expiration?: number };
+      };
+      const w = globalThis as unknown as { require(m: string): Record<string, never> };
+      const collection = w.require('WAWebCollections').Chat as unknown as {
+        getModelsArray(): WaChat[];
+        get(wid: unknown): WaChat | undefined;
+      };
+      const safe = <T>(f: () => T, d: T): T => {
+        try {
+          return f() ?? d;
+        } catch {
+          return d;
+        }
+      };
+      let chats: WaChat[];
+      if (id) {
+        const wid = safe(
+          () =>
+            (
+              w.require('WAWebWidFactory') as unknown as { createWid(s: string): unknown }
+            ).createWid(id),
+          null,
+        );
+        const one = wid ? collection.get(wid) : undefined;
+        chats = one ? [one] : [];
+      } else {
+        chats = collection.getModelsArray();
+      }
+      return chats
+        .filter((c) => !/@(newsletter|broadcast)$/.test(c.id._serialized))
+        .map((c) => {
+          const expiration = safe(() => c.mute?.expiration, 0);
+          return {
+            id: c.id._serialized,
+            name: String(
+              safe(
+                () =>
+                  c.formattedTitle ||
+                  c.name ||
+                  c.groupMetadata?.subject ||
+                  c.contact?.name ||
+                  c.contact?.pushname ||
+                  c.id.user,
+                c.id._serialized,
+              ),
+            ),
+            isGroup: Boolean(c.groupMetadata) || c.id.server === 'g.us',
+            unreadCount: safe(() => c.unreadCount, 0) ?? 0,
+            t: safe(() => c.t, 0) ?? 0,
+            archived: Boolean(safe(() => c.archive, false)),
+            pinned: Boolean(safe(() => c.pin, 0)),
+            muted: typeof expiration === 'number' && expiration !== 0,
+          };
+        });
+    }, only);
+    return raw.map((c) => ({
+      id: c.id,
+      name: c.name,
+      isGroup: c.isGroup,
+      unreadCount: Math.max(0, c.unreadCount),
+      lastActivityAt: c.t ? c.t * 1000 : null,
+      archived: c.archived,
+      pinned: c.pinned,
+      muted: c.muted,
+    }));
   }
 
   private async destroyClient(): Promise<void> {
@@ -300,19 +426,6 @@ export class WwebjsTransport implements WhatsAppTransport {
 }
 
 // ------------------------------------------------------------------ mapping
-
-function toChat(c: WChat): Chat {
-  return {
-    id: c.id._serialized,
-    name: c.name || c.id.user,
-    isGroup: c.isGroup,
-    unreadCount: c.unreadCount ?? 0,
-    lastActivityAt: c.timestamp ? c.timestamp * 1000 : null,
-    archived: Boolean(c.archived),
-    pinned: Boolean(c.pinned),
-    muted: Boolean(c.isMuted),
-  };
-}
 
 const KIND: Record<string, MessageKind> = {
   chat: 'text',
@@ -341,17 +454,6 @@ function toMessage(m: WMessage, chatId?: ChatId): Message {
     text: m.body ?? '',
     hasMedia: m.hasMedia,
     quotedMessageId: m.hasQuotedMsg ? (raw._data?.quotedStanzaID ?? null) : null,
-  };
-}
-
-function toContact(c: WContact): Contact {
-  return {
-    id: c.id._serialized,
-    name: c.name ?? null,
-    pushName: c.pushname ?? null,
-    phoneNumber: c.number ?? null,
-    isMyContact: c.isMyContact,
-    isBusiness: c.isBusiness,
   };
 }
 

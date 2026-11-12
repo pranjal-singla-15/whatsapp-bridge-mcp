@@ -23,6 +23,11 @@ export interface SupervisorOptions {
   failoverAfter: number;
   breakerThreshold: number;
   breakerCooldownMs: number;
+  /**
+   * How long a call waits for an in-progress (re)connect before failing with NOT_CONNECTED.
+   * Covers cold start: launching the browser and loading WhatsApp Web can take 20-40s.
+   */
+  connectGraceMs?: number;
   /** How long to stay on a fallback transport before trying the primary again. */
   failbackAfterMs?: number;
 }
@@ -256,7 +261,7 @@ export class Supervisor {
     if (this.status_ !== 'running' || !this.transport) {
       if (this.status_ === 'connecting') {
         // Brief grace period so calls made during a quick reconnect succeed transparently.
-        await this.waitUntilConnected(15_000).catch(() => undefined);
+        await this.waitUntilConnected(this.opts.connectGraceMs ?? 45_000).catch(() => undefined);
       }
       if (this.status_ !== 'running' || !this.transport) {
         throw errors.notConnected(this.transport?.state() ?? this.status_);

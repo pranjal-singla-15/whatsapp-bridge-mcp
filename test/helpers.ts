@@ -34,6 +34,7 @@ export const fastResilience: SupervisorOptions = {
   failoverAfter: 2,
   breakerThreshold: 3,
   breakerCooldownMs: 60_000,
+  connectGraceMs: 2_000,
 };
 
 export function chat(id: string, name: string, extra: Partial<Chat> = {}): Chat {

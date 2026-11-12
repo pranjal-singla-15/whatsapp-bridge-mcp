@@ -50,6 +50,7 @@ export const ConfigSchema = z.object({
     failoverAfter: z.number().int().min(1),
     breakerThreshold: z.number().int().min(1),
     breakerCooldownMs: z.number().int().min(1000),
+    connectGraceMs: z.number().int().min(0).max(120_000),
   }),
   /** Ordered list of known-good WhatsApp Web builds to try (wwebjs). Empty = library default. */
   pinnedWebVersions: z.array(z.string().regex(/^\d+\.\d+\.\d+(-[\w.]+)?$/)),
@@ -86,6 +87,7 @@ export function defaultConfig(): Config {
       failoverAfter: 3,
       breakerThreshold: 3,
       breakerCooldownMs: 10 * 60_000,
+      connectGraceMs: 45_000,
     },
     pinnedWebVersions: [],
   };
