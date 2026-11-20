@@ -12,3 +12,6 @@ coverage/
 *.session
 canary-session*.tar*
 *.mcpb
+
+# IDE
+.idea/
