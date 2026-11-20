@@ -21,44 +21,85 @@ chats, search messages and contacts, and send messages with safety rules built i
 
 ## Install
 
-### Claude Code (plugin, after the first npm release)
+Requirements: [Node.js](https://nodejs.org) 20 or newer, [Git](https://git-scm.com), and Chrome,
+Edge or Chromium (found automatically).
 
-```text
-/plugin marketplace add pranjal-singla-15/whatsapp-bridge-mcp
-/plugin install whatsapp-bridge@whatsapp-bridge
-```
+> [!NOTE]
+> The package is not on npm yet, so `npx whatsapp-bridge-mcp` does not work. Install from source
+> (Claude Code and other MCP clients) or use the `.mcpb` file (Claude Desktop).
 
-### Claude Code (manual)
+### Claude Code (from source)
 
-```bash
-claude mcp add whatsapp -- npx -y whatsapp-bridge-mcp@latest
-# Windows (native, not WSL):
-claude mcp add whatsapp -- cmd /c npx -y whatsapp-bridge-mcp@latest
-```
+1. Clone and build:
+
+   ```bash
+   git clone https://github.com/pranjal-singla-15/whatsapp-bridge-mcp.git
+   cd whatsapp-bridge-mcp
+   npm ci
+   npm run build
+   ```
+
+2. Register the server with Claude Code. Use the **absolute** path to the folder you just cloned:
+
+   ```bash
+   # macOS / Linux
+   claude mcp add --scope user whatsapp -- node "$PWD/dist/index.js"
+
+   # Windows (PowerShell)
+   claude mcp add --scope user whatsapp -- node "$PWD\dist\index.js"
+   ```
+
+   `--scope user` makes WhatsApp available in every project, not just this folder.
+
+3. Restart Claude Code and run `/mcp`. `whatsapp` should show as connected.
+
+To update later, run `git pull`, `npm ci` and `npm run build` in the same folder, then restart
+Claude Code. Don't move or delete the folder: Claude Code runs the server from there.
 
 ### Claude Desktop
 
 Download `whatsapp-bridge.mcpb` from the [latest release](https://github.com/pranjal-singla-15/whatsapp-bridge-mcp/releases/latest)
 and double-click it. Settings let you turn on sending.
 
-### Any MCP client
+### Any MCP client (from source)
+
+Build as in step 1 above, then point your client at the built file:
 
 ```json
-{ "mcpServers": { "whatsapp": { "command": "npx", "args": ["-y", "whatsapp-bridge-mcp@latest"] } } }
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "node",
+      "args": ["/absolute/path/to/whatsapp-bridge-mcp/dist/index.js"]
+    }
+  }
+}
 ```
 
-Requirements: Node.js 20 or newer, and Chrome, Edge or Chromium (found automatically).
+On Windows, write the path with double backslashes, e.g. `"C:\\Users\\you\\whatsapp-bridge-mcp\\dist\\index.js"`.
 
 ## Link your account
 
-Either ask Claude to "log in to WhatsApp" (the `whatsapp_login` tool shows a QR code), or run:
+Either ask Claude to "log in to WhatsApp" (the `whatsapp_login` tool shows a QR code), or run
+this from the cloned folder:
 
 ```bash
-npx whatsapp-bridge-mcp login
+node dist/index.js login
 ```
 
 Then on your phone go to **WhatsApp → Settings → Linked devices → Link a device** and scan.
-`npx whatsapp-bridge-mcp doctor` checks your setup.
+`node dist/index.js doctor` checks your setup.
+
+## Turn on sending (optional)
+
+The server starts read-only. To let Claude send messages, create `~/.whatsapp-bridge/config.json`
+(on Windows: `C:\Users\<you>\.whatsapp-bridge\config.json`) containing:
+
+```json
+{ "send": { "enabled": true } }
+```
+
+Then restart Claude Code. Every message still shows you a preview and waits for your approval.
 
 ## Tools
 
@@ -100,12 +141,12 @@ Example: enable sending.
 { "send": { "enabled": true } }
 ```
 
-Try every tool without an account: `WA_BRIDGE_TRANSPORT=fake npx whatsapp-bridge-mcp`.
+Try every tool without an account: `WA_BRIDGE_TRANSPORT=fake node dist/index.js`.
 
 ## Privacy
 
 Everything runs on your machine. The session and data live only in `~/.whatsapp-bridge`.
-There is no telemetry and no server. `npx whatsapp-bridge-mcp logout` unlinks the device and
+There is no telemetry and no server. `node dist/index.js logout` (from the cloned folder) unlinks the device and
 deletes the local session.
 
 ## How it works
